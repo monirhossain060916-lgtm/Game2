@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Desert Ronin: Neon Sands</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Orbitron', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* UI Overlay matching the image */
+        #uiLayer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            padding: 20px;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .hud-col {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .hud-label {
+            color: #00f0ff; /* Cyan like image */
+            font-size: 24px;
+            font-weight: 700;
+            text-shadow: 0 0 10px #00f0ff;
+            letter-spacing: 2px;
+        }
+
+        .hud-value {
+            color: #ffe600; /* Yellow like image */
+            font-size: 36px;
+            font-weight: 700;
+            margin-top: 5px;
+            text-shadow: 0 0 10px #ff0055;
+        }
+
+        /* Center Bar */
+        .hud-center {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        #energyBarContainer {
+            width: 300px;
+            height: 15px;
+            background: rgba(0, 240, 255, 0.2);
+            border: 2px solid #00f0ff;
+            transform: skew(-20deg);
+            overflow: hidden;
+            position: relative;
+        }
+
+        #energyBar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #00f0ff, #fff);
+            box-shadow: 0 0 20px #00f0ff;
+            transition: width 0.1s;
+        }
+
+        /* Screens */
+        #startScreen, #gameOverScreen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 0, 30, 0.85);
+            backdrop-filter: blur(8px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            pointer-events: auto;
+        }
+        
+        .hidden { display: none !important; }
+
+        h1 {
+            font-size: 60px;
+            color: #ffe600;
+            text-transform: uppercase;
+            text-shadow: 4px 4px #ff0055;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        p { color: #00f0ff; font-size: 18px; margin-bottom: 40px; letter-spacing: 1px; text-align: center; }
+
+        button {
+            background: #ff0055;
+            color: #fff;
+            border: none;
+            padding: 20px 60px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            font-weight: bold;
+            transform: skew(-10deg);
+            cursor: pointer;
+            box-shadow: 5px 5px 0 #7000ff;
+            transition: 0.2s;
+        }
+        button:hover { transform: skew(-10deg) scale(1.05); box-shadow: 8px 8px 0 #7000ff; }
+
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="uiLayer">
+        <!-- Left: Score -->
+        <div class="hud-col">
+            <div class="hud-label">SCORE</div>
+            <div class="hud-value" id="scoreEl">00000</div>
+        </div>
+
+        <!-- Center: Bar -->
+        <div class="hud-center">
+            <div id="energyBarContainer"><div id="energyBar"></div></div>
+        </div>
+
+        <!-- Right: Combo -->
+        <div class="hud-col" style="align-items: flex-end;">
+            <div class="hud-label">COMBO</div>
+            <div class="hud-value" id="comboEl">0</div>
+        </div>
+    </div>
+
+    <div id="startScreen">
+        <h1>Neon<br>Ronin</h1>
+        <p>DRAG to Run // TAP to Slash<br>Slice the Piñatas!</p>
+        <button id="startBtn">START</button>
+    </div>
+
+    <div id="gameOverScreen" class="hidden">
+        <h1 style="color: #ff0055;">CRASHED</h1>
+        <p id="finalScore">Score: 0</p>
+        <button id="restartBtn">RETRY</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d', { alpha: false });
+
+        // UI Elements
+        const scoreEl = document.getElementById('scoreEl');
+        const comboEl = document.getElementById('comboEl');
+        const energyBar = document.getElementById('energyBar');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        // Config
+        let width, height;
+        const PERSPECTIVE = 300; // Lower perspective for that "low camera" feel
+        const HORIZON_Y = 0.5;   // Center horizon
+        
+        // Colors from Image
+        const C_SKY_TOP = '#2b0055';    // Deep Purple
+        const C_SKY_BOT = '#ff0055';    // Hot Pink Fade
+        const C_GRID = '#ff00ff';       // Neon Pink Grid
+        const C_GROUND = '#1a0033';     // Dark Purple Ground
+        const C_SUN_TOP = '#ffe600';    // Yellow
+        const C_SUN_BOT = '#ff0055';    // Pink/Red
+        const C_SWORD = '#00f0ff';      // Cyan Glow
+
+        // Game State
+        let game = {
+            running: false,
+            frame: 0,
+            score: 0,
+            combo: 0,
+            speed: 25,
+            energy: 0
+        };
+
+        // Input
+        let input = { x: 0 };
+
+        // Resize
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Input Handlers
+        function handleInput(x, isClick) {
+            if(!game.running) return;
+            const normX = (x - width/2) / (width/2);
+            player.targetX = normX * 1500; // Wider lane
+            if(isClick) player.attack();
+        }
+        window.addEventListener('mousemove', e => handleInput(e.clientX, false));
+        window.addEventListener('mousedown', () => handleInput(input.x, true));
+        window.addEventListener('touchmove', e => {
+            e.preventDefault();
+            handleInput(e.touches[0].clientX, false);
+            input.x = e.touches[0].clientX;
+        }, {passive: false});
+        window.addEventListener('touchstart', () => handleInput(input.x, true), {passive: false});
+
+        // --- 3D MATH ---
+        function project(x, y, z) {
+            const scale = PERSPECTIVE / (PERSPECTIVE + z);
+            return {
+                x: width/2 + x * scale,
+                y: height * HORIZON_Y + y * scale,
+                scale: scale
+            };
+        }
+
+        // --- DRAWING HELPERS ---
+        function drawMountain(xOffset, heightScale) {
+            ctx.beginPath();
+            ctx.moveTo(0, height * HORIZON_Y);
+            for(let x = 0; x <= width; x += 20) {
+                // Perlin-ish noise approximation
+                let h = Math.sin((x + xOffset) * 0.005) * 50 + Math.sin((x + xOffset) * 0.02) * 20;
+                h *= heightScale;
+                ctx.lineTo(x, height * HORIZON_Y - Math.abs(h));
+            }
+            ctx.lineTo(width, height * HORIZON_Y);
+            ctx.fillStyle = '#120024'; // Dark silhouette
+            ctx.fill();
+            ctx.strokeStyle = '#00f0ff'; // Cyan wireframe edge
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+
+        // --- CLASSES ---
+
+        class Player {
+            constructor() {
+                this.x = 0;
+                this.y = 180; // Height from floor
+                this.targetX = 0;
+                this.runCycle = 0;
+                this.attackFrame = 0;
+                this.isAttacking = false;
+                this.points = []; // Cloth physics points
+                for(let i=0; i<6; i++) this.points.push({x:0, y:0});
+            }
+
+            update() {
+                this.x += (this.targetX - this.x) * 0.15;
+                this.runCycle += 0.25;
+
+                // Cloth Physics
+                let headX = this.x;
+                let headY = -140 + Math.sin(this.runCycle * 2) * 5;
+                
+                // Simulate Scarf/Cape
+                this.points[0] = {x: headX, y: headY};
+                for(let i=1; i<this.points.length; i++) {
+                    let prev = this.points[i-1];
+                    let curr = this.points[i];
+                    // Drag + Wind + Sin Wave
+                    curr.x += (prev.x - curr.x - (game.speed * 1.5)) * 0.4;
+                    curr.y += (prev.y - curr.y + Math.sin(game.frame * 0.2 + i)*5) * 0.4;
+                }
+
+                if(this.isAttacking) {
+                    this.attackFrame++;
+                    if(this.attackFrame > 10) this.isAttacking = false;
+                }
+            }
+
+            draw() {
+                const scale = 1.2; // Size
+                const cx = width/2 + (this.x / (width/2) * 30); 
+                const cy = height * 0.9; // Position on screen
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.scale(scale, scale);
+
+                const bob = Math.sin(this.runCycle * 2) * 5;
+
+                // 1. Scarf/Cape (Behind)
+                ctx.beginPath();
+                ctx.moveTo(0, -130 + bob);
+                for(let i=1; i<this.points.length; i++) {
+                    let p = this.points[i];
+                    // Map world space to local
+                    ctx.lineTo((p.x - this.x) * 0.6, (p.y + 140));
+                }
+                ctx.lineCap = 'round';
+                ctx.lineWidth = 12;
+                ctx.strokeStyle = '#dcb484'; // Tan Cloth
+                ctx.stroke();
+
+                // 2. Character Body (Robe)
+                // Legs
+                const legL = Math.sin(this.runCycle) * 20;
+                const legR = Math.sin(this.runCycle + Math.PI) * 20;
+                
+                ctx.fillStyle = '#c29a6b'; // Darker Tan
+                // Left Leg
+                ctx.fillRect(-15, -40 + legL, 12, 40);
+                // Right Leg
+                ctx.fillRect(5, -40 + legR, 12, 40);
+
+                // Robe Body
+                ctx.fillStyle = '#e5c695'; // Light Tan
+                ctx.beginPath();
+                ctx.moveTo(-25, -130 + bob); // Shoulder L
+                ctx.lineTo(25, -130 + bob);  // Shoulder R
+                ctx.lineTo(35, -40 + bob);   // Hem R
+                ctx.lineTo(-35, -40 + bob);  // Hem L
+                ctx.fill();
+                
+                // Sash
+                ctx.fillStyle = '#3a2518'; // Brown Sash
+                ctx.fillRect(-28, -90 + bob, 56, 10);
+
+                // Head (Turban)
+                ctx.fillStyle = '#f0e0c0';
+                ctx.beginPath();
+                ctx.arc(0, -145 + bob, 14, 0, Math.PI*2);
+                ctx.fill();
+                
+                // 3. The Sword (Glowing Blue Katana)
+                ctx.lineWidth = 4;
+                if(this.isAttacking) {
+                    // Slash Animation
+                    const p = this.attackFrame / 10;
+                    const angle = -Math.PI + (p * Math.PI * 1.5); // Wide arc
+                    
+                    const tx = Math.cos(angle) * 100;
+                    const ty = -100 + bob + Math.sin(angle) * 100;
+
+                    // Glow
+                    ctx.shadowColor = C_SWORD;
+                    ctx.shadowBlur = 20;
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 6;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(20, -100 + bob);
+                    ctx.lineTo(20 + tx, ty);
+                    ctx.stroke();
+
+                    // Slash Trail
+                    ctx.fillStyle = 'rgba(0, 240, 255, 0.5)';
+                    ctx.shadowBlur = 0;
+                    ctx.beginPath();
+                    ctx.moveTo(20, -100 + bob);
+                    ctx.arc(20, -100 + bob, 110, -Math.PI, angle);
+                    ctx.fill();
+
+                } else {
+                    // Holding position (Low guard)
+                    ctx.shadowColor = C_SWORD;
+                    ctx.shadowBlur = 15;
+                    ctx.strokeStyle = '#fff'; // White core
+                    ctx.lineWidth = 4;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(25, -100 + bob);
+                    ctx.lineTo(80, -50 + bob); // Pointing down-right
+                    ctx.stroke();
+                }
+
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            }
+
+            attack() {
+                this.isAttacking = true;
+                this.attackFrame = 0;
+            }
+        }
+
+        class Piñata {
+            constructor() {
+                this.x = (Math.random() - 0.5) * 2500;
+                this.y = 150;
+                this.z = 3000;
+                this.active = true;
+                this.color1 = '#ffe600'; // Yellow
+                this.color2 = '#ff0055'; // Pink
+                this.color3 = '#00f0ff'; // Blue
+            }
+
+            update() {
+                this.z -= game.speed;
+            }
+
+            draw() {
+                if(!this.active) return;
+                const p = project(this.x, this.y, this.z);
+                if(p.scale <= 0) return;
+
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                
+                const s = p.scale * 2; // Base scale
+
+                // Draw "Piñata" Stripes (Stacked Rectangles)
+                const w = 60 * s;
+                const h = 120 * s;
+
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, w/1.5, w/4, 0, 0, Math.PI*2);
+                ctx.fill();
+
+                // Body (Striped)
+                const segments = 5;
+                const segH = h / segments;
+                
+                // Arms (Cactus shape)
+                this.drawLimb(-w/1.5, -h*0.6, w/3, h/3, s); // Left
+                this.drawLimb(w/1.5, -h*0.4, w/3, h/3, s);  // Right
+
+                // Main Trunk Stripes
+                for(let i=0; i<segments; i++) {
+                    let yPos = -h + (i * segH);
+                    // Cycle colors: Yellow, Pink, Blue
+                    if(i%3===0) ctx.fillStyle = this.color1;
+                    else if(i%3===1) ctx.fillStyle = this.color3;
+                    else ctx.fillStyle = this.color2;
+                    
+                    ctx.fillRect(-w/2, yPos, w, segH);
+                }
+
+                // Face (Pixel eyes)
+                ctx.fillStyle = '#000';
+                const eyeSz = 8 * s;
+                ctx.fillRect(-15*s, -h + 30*s, eyeSz, eyeSz);
+                ctx.fillRect(15*s, -h + 30*s, eyeSz, eyeSz);
+
+                ctx.restore();
+            }
+
+            drawLimb(x, y, w, h, s) {
+                // Simple striped limb
+                ctx.fillStyle = this.color2;
+                ctx.fillRect(x - w/2, y, w, h);
+                ctx.fillStyle = this.color1;
+                ctx.fillRect(x - w/2, y - w, w, w); // Tip
+            }
+        }
+
+        class Confetti {
+            constructor(x, y, z) {
+                this.x = x; this.y = y; this.z = z;
+                this.vx = (Math.random() - 0.5) * 60;
+                this.vy = -Math.random() * 50 - 20;
+                this.vz = -game.speed;
+                this.life = 1;
+                const cols = ['#ffe600', '#ff0055', '#00f0ff'];
+                this.color = cols[Math.floor(Math.random()*cols.length)];
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.z += this.vz;
+                this.vy += 2; // Gravity
+                this.life -= 0.02;
+            }
+            draw() {
+                if(this.life <= 0) return;
+                const p = project(this.x, this.y, this.z);
+                if(p.scale <= 0) return;
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                const s = 15 * p.scale;
+                ctx.fillRect(p.x - s/2, p.y - s/2, s, s); // Square confetti
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // --- MAIN GAME LOOP ---
+
+        let player = new Player();
+        let enemies = [];
+        let particles = [];
+        let gridOffset = 0;
+
+        function spawn() {
+            if(game.frame % 30 === 0) enemies.push(new Piñata());
+        }
+
+        function checkCollisions() {
+            enemies.forEach(e => {
+                if(!e.active) return;
+                if(e.z < 250 && e.z > -50) {
+                    // Hit box
+                    if(Math.abs(e.x - player.x) < 200) {
+                        if(player.isAttacking && player.attackFrame < 8) {
+                            // SLASH!
+                            e.active = false;
+                            game.score += 100;
+                            game.combo++;
+                            game.energy = Math.min(100, game.energy + 10);
+                            
+                            // EXPLOSION
+                            for(let i=0; i<20; i++) particles.push(new Confetti(e.x, e.y - 100, e.z));
+                            
+                            // Update UI
+                            scoreEl.innerText = game.score.toString().padStart(5, '0');
+                            comboEl.innerText = game.combo;
+                            energyBar.style.width = game.energy + '%';
+
+                        } else if (e.z < 50) {
+                            // CRASH
+                            gameOver();
+                        }
+                    }
+                }
+            });
+        }
+
+        function gameOver() {
+            game.running = false;
+            finalScoreEl.innerText = "FINAL SCORE: " + game.score;
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        function drawBackground() {
+            // 1. Gradient Sky
+            const grad = ctx.createLinearGradient(0, 0, 0, height * HORIZON_Y);
+            grad.addColorStop(0, C_SKY_TOP);
+            grad.addColorStop(1, '#4a004a'); // Mid purple
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, width, height);
+
+            // 2. Retro Sun
+            const sunSize = 200;
+            const sunY = height * HORIZON_Y + 50; // Sits on horizon
+            const sunGrad = ctx.createLinearGradient(0, sunY - sunSize, 0, sunY + sunSize);
+            sunGrad.addColorStop(0, C_SUN_TOP);
+            sunGrad.addColorStop(1, C_SUN_BOT);
+            
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(width/2, sunY, sunSize, 0, Math.PI*2);
+            ctx.fillStyle = sunGrad;
+            ctx.fill();
+            // Sun Cuts (Scanlines)
+            ctx.fillStyle = C_SKY_TOP; // Same as background dark
+            for(let i=0; i<10; i++) {
+                let y = sunY - 50 + (i * 15);
+                let h = 3 + i; 
+                if(y < sunY + sunSize) ctx.fillRect(width/2 - sunSize, y, sunSize*2, h);
+            }
+            ctx.restore();
+
+            // 3. Wireframe Mountains (Back)
+            drawMountain(0, 1.5);
+            
+            // 4. Grid Floor
+            ctx.fillStyle = C_GROUND;
+            ctx.fillRect(0, height * HORIZON_Y, width, height);
+            
+            ctx.strokeStyle = C_GRID;
+            ctx.lineWidth = 2;
+            ctx.shadowColor = C_GRID;
+            ctx.shadowBlur = 10;
+
+            ctx.beginPath();
+            // Vertical lines (Perspective)
+            for(let x = -4000; x <= 4000; x += 300) {
+                const p1 = project(x, 200, 0);
+                const p2 = project(x, 200, 4000);
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+            }
+            // Horizontal lines (Moving)
+            gridOffset -= game.speed;
+            if(gridOffset < 0) gridOffset += 300;
+
+            for(let z = 0; z < 4000; z += 300) {
+                let dz = z + gridOffset;
+                const p1 = project(-4000, 200, dz);
+                const p2 = project(4000, 200, dz);
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        function loop() {
+            if(!game.running) return;
+            game.frame++;
+            game.speed = 25 + (game.score/2000);
+
+            ctx.clearRect(0,0,width,height);
+
+            drawBackground();
+
+            spawn();
+            checkCollisions();
+            player.update();
+
+            // Render Order: Enemeies far -> near, Particles, Player
+            const all = [...enemies, ...particles].sort((a,b) => b.z - a.z);
+            all.forEach(o => { o.update(); o.draw(); });
+
+            player.draw();
+
+            // Cleanup
+            enemies = enemies.filter(e => e.z > -500 && e.active);
+            particles = particles.filter(p => p.life > 0);
+
+            requestAnimationFrame(loop);
+        }
+
+        function startGame() {
+            game.running = true;
+            game.score = 0;
+            game.combo = 0;
+            game.energy = 0;
+            game.speed = 25;
+            enemies = [];
+            particles = [];
+            player = new Player();
+            
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            scoreEl.innerText = "00000";
+            comboEl.innerText = "0";
+            energyBar.style.width = "0%";
+            
+            loop();
+        }
+
+        startBtn.addEventListener('click', startGame);
+        restartBtn.addEventListener('click', startGame);
+
+        // Init
+        drawBackground();
+        player.draw();
+
+    </script>
+</body>
+</html>
